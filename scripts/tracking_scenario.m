@@ -535,7 +535,7 @@ end
 
 % (3) 3D 트래킹 시각화 맵 생성
 if ~all(isnan(posNodeEst(1,:)))
-    helperBLEVisualizeNodeTracking(locatorPos, posNode, posLocatorBuffer, posNodeEst)
+    visualizeLocalization(locatorPos, posNode, posLocatorBuffer, posNodeEst)
     
     % 시각화 축(Axis) 동적 설정
     if enableMultipath

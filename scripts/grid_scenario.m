@@ -6,7 +6,7 @@
 % 멀티패스 시뮬레이션 파라미터
 enableMultipath = false;                % 멀티패스 레이트레이싱 시뮬레이션 on/off
 enableMultipathVisual = true;           % 마지막 포인트 다수 locator 멀티패스 시각화 on/off
-stlFileName = 'randsimple-20-1.stl';   % 로드할 환경 맵 STL 파일 (실제 파일 경로로 변경 필요)
+stlFileName = 'test_room_10x8x3.stl';   % 로드할 환경 맵 STL 파일 (실제 파일 경로로 변경 필요)
 material = 'air';
 
 % 로케이터 설치 위치 및 각도 파라미터 (단위 벡터 기반)
@@ -17,7 +17,7 @@ locator_up = [0, 0, 1; 0, 0, 1; 0, 0, 1; 0, 1, 0; 0, 0, 1];
 
 % 이동 노드(태그)의 그리드 간격 설정
 fixedHeight = 1.5;                      % 측위를 진행할 2차원 평면의 고정 높이 (m)
-gridSpacing = 1;                      % 2차원 공간 분할 간격 (m)
+gridSpacing = 2;                      % 2차원 공간 분할 간격 (m)
 offset = 0.5;
 
 % 위치 추정 방식 설정
@@ -51,7 +51,7 @@ rangeConfig.TransmitterCableLoss = 0;
 rangeConfig.ReceiverCableLoss = 0;
 
 % =========================================================================
-% 2. 쿼터니언을 이용한 로케이터 방향(설치 각도) 및 측위 위치 생성
+% 2. 쿼터니언을 이용한 로케이터 방향(설치 각도)
 % =========================================================================
 numLocators = size(locatorPos, 2);      % 행렬의 칼럼(2)의 갯수
 rotMatArray = zeros(3, 3, numLocators); % 각 로케이터의 회전 행렬 저장용
@@ -74,50 +74,51 @@ end
 % 회전 행렬을 쿼터니언(Quaternion) 객체로 변환 (좌표 회전 연산의 효율성)
 locatorQuat = quaternion(rotMatArray, 'rotmat', 'point');
 
-% STL 도면 기반 내부/외부 판별 및 안전 구역 그리드 생성
-TR = stlread(stlFileName);
+% =========================================================================
+% 3. STL 도면 기반 내부/외부 판별 및 그리드 측위 위치 생성
+% ========================================================================
+% STL 파일 로드 및 좌표 추출
+TR = stlread(stlFileName);  % MATLAB의 'triangulation' 객체 생성
+P = TR.Points;              % [N X 3] 크기 행렬로 모든 Vertex 로드
 
-% 전체 도면의 X, Y 바운딩 박스를 기준으로 초기 그리드 생성
-minX = min(TR.Points(:,1)); maxX = max(TR.Points(:,1));
-minY = min(TR.Points(:,2)); maxY = max(TR.Points(:,2));
-[X, Y] = meshgrid(minX:gridSpacing:maxX, minY:gridSpacing:maxY);
+% Z축 좌표계 분석 및 바닥면 투영
+% 2D .pol 파일에서 Z축을 늘려 만든 특수한 .stl 데이터
+Z = P(:,3);                 % Z축 좌표만 추출하여 행렬 구성
+zMin = min(Z);              % 최솟값 = 0
+
+% 정점 3개가 모두 바닥면(zMin)에 위치한 바닥면 삼각형(Face)의 인덱스만 필터링
+floorFacesIdx = all(abs(Z(TR.ConnectivityList) - zMin) < 1e-4, 2);  % (부동소수점 오차 방지를 위해 1e-4 마진 적용)
+floorTriangles = TR.ConnectivityList(floorFacesIdx, :);
+
+% 바닥면 삼각형들을 2D polyshape 배열로 만들어 한개 폴리곤으로 병합
+polyArray = repmat(polyshape, size(floorTriangles, 1), 1);
+for i = 1:size(floorTriangles, 1)
+    idx = floorTriangles(i, :);
+    polyArray(i) = polyshape(P(idx, 1), P(idx, 2));                 % Z좌표 제외 X, Y 좌표만 사용한 2D 삼각형 생성
+end
+roomPoly = union(polyArray);
+
+% 이격 거리(offset) 적용을 통한 100% 안전 구역 정의
+safeRoomPoly = polybuffer(roomPoly, -offset);
+
+% Grid 한 측위 지점 생성
+[xlimBox, ylimBox] = boundingbox(safeRoomPoly);
+[X, Y] = meshgrid(xlimBox(1):gridSpacing:xlimBox(2), ylimBox(1):gridSpacing:ylimBox(2));
 X = X(:); Y = Y(:);
 
-% 가장 외곽 테두리(Room Boundary) 내부에 있는지 확인 
-k_outer = boundary(TR.Points(:,1), TR.Points(:,2), 1);
-roomPoly = polyshape(TR.Points(k_outer,1), TR.Points(k_outer,2));
+% 재검증 작업 : 유효 포인트 필터링
+validGridIdx = isinterior(safeRoomPoly, X, Y);  % 폴리곤 내부에 있는지 판별
 
-% 폴리곤을 안쪽으로 offset 만큼 수축시켜 안전 구역(Safe Zone) 생성
-safeRoomPoly = polybuffer(roomPoly, -offset); 
-inOuter = isinterior(safeRoomPoly, X, Y);
+% 고정 Z높이 반영하여 최종 3D 측위 포인트 변환
+validX = X(validGridIdx);
+validY = Y(validGridIdx);
+validZ = repmat(fixedHeight, length(validX), 1);
 
-% 내부에 있는 기둥 등의 장애물 영역 회피 (이격 거리 적용)
-zMargin = 5; % 높이 탐색 여유폭
-obsPts = TR.Points(abs(TR.Points(:,3) - fixedHeight) <= zMargin, 1:2);
-
-if ~isempty(obsPts)
-    obsShape = alphaShape(obsPts(:,1), obsPts(:,2), gridSpacing*2); 
-    inObstacle = inShape(obsShape, X, Y);
-    
-    % [핵심] 장애물의 버텍스들과의 거리를 계산하여 offset 이내인 점들을 추가로 배제
-    % (기둥 표면에 아슬아슬하게 붙은 점들을 쳐내기 위함)
-    [minDistToObs, ~] = pdist2(obsPts, [X, Y], 'Euclidean', 'Smallest', 1);
-    tooClose = minDistToObs' <= clearance;
-    
-    inObstacle = inObstacle | tooClose;
-else
-    inObstacle = false(size(X));
-end
-
-% 최종 유효 포인트: 수축된 외곽 안전 구역 '내부'이면서 장애물 '외부'인 점들
-validGridIdx = inOuter & ~inObstacle;
-
-% 메인 루프에서 사용할 변수로 할당 (3xN 행렬 형태로 변환)
-posNode = [X(validGridIdx), Y(validGridIdx), repmat(fixedHeight, sum(validGridIdx), 1)]';
+posNode = [validX, validY, validZ]';
 numNodePositions = size(posNode, 2);
 
 % =========================================================================
-% 3. 수신기 및 BLE 객체 구성
+% 4. 수신기 및 BLE 객체 구성
 % =========================================================================
 % AoA 추정 알고리즘 설정 객체 생성
 cfg = bleAngleEstimateConfig("ArraySize", arraySize, ...
@@ -178,7 +179,7 @@ if enableMultipath
 end
 
 % =========================================================================
-% 4. 메인 루프: 노드 이동 시뮬레이션
+% 5. 메인 루프: 노드 이동 시뮬레이션
 % =========================================================================
 for inumNode = 1:numNodePositions
     % (1) 현재 노드 위치에서 각 로케이터까지의 거리 계산 및 유효 로케이터(80m 이내) 선별
@@ -534,7 +535,7 @@ for inumNode = 1:numNodePositions
 end
 
 % =========================================================================
-% 5. 결과 출력 및 시각화
+% 6. 결과 출력 및 시각화
 % =========================================================================
 % (1) RMSE 및 위치 추정 실패율 터미널 출력
 posErr = sqrt(sum((posNodeEst - posNode).^2)); 
@@ -571,7 +572,7 @@ end
 
 % (3) 3D 트래킹 시각화 맵 생성
 if ~all(isnan(posNodeEst(1,:)))
-    helperBLEVisualizeNodeTracking(locatorPos, posNode, posLocatorBuffer, posNodeEst)
+    visualizeLocalization(locatorPos, posNode, posLocatorBuffer, posNodeEst)
     
     % 시각화 축(Axis) 동적 설정
     if enableMultipath
