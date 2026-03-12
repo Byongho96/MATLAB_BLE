@@ -18,6 +18,9 @@ function FIM = cumulativeFIMCalculation(nodePos, locatorPos, locatorRotMat, ante
     
     % 계산 편의를 위해 타겟 위치를 열 벡터로 변환
     x_target = nodePos(:);
+
+    % 안테나 길이에 파장 반영
+    antennaPos = antennaPos * lambda;
     
     for i = 1:N
         % i번째 로케이터의 위치(열 벡터)와 쿼터니언 추출

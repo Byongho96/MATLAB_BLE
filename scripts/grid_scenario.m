@@ -9,19 +9,40 @@ enableMultipathVisual = true;           % 마지막 포인트 다수 locator 멀
 stlFileName = 'test_room_10x8x3.stl';   % 로드할 환경 맵 STL 파일 (실제 파일 경로로 변경 필요)
 material = 'air';
 
+% FIM 분석
+correlationFIM = 'A-opt';                  % false | 'A-opt' | 'D-opt' | 'E-opt' | 'Cond'
+
 % 로케이터 설치 위치 및 각도 파라미터 (단위 벡터 기반)
 % locator_front = [1, 0, 0] locator_up = [0, 0, 1]
-locatorPos = [5, 1, 1.5; 1, 4, 1.5; 5, 7, 1.5; 5, 4, 3; 9, 4, 1.5]';
-locator_front = [0, 1, 0; 1, 0, 0; 0, -1, 0; 0, 0, -1; -1, 0, 0]; 
-locator_up = [0, 0, 1; 0, 0, 1; 0, 0, 1; 0, 1, 0; 0, 0, 1];
+
+% Diagonal : 0.65436 / 11.0865
+% locatorPos = [0, 0, 1.5; 0, 8, 1.5; 10, 8, 1.5; 10, 0, 1.5]';
+% locator_front = [1, 1, 0; 1, -1, 0; -1, -1, 0; -1, 1, 0]; 
+% locator_up = [0, 0, 1; 0, 0, 1; 0, 0, 1; 0, 0, 1];
+
+% Rectangular : 0.50061 / 9.1077
+% locatorPos = [5, 0, 1.5; 0, 4, 1.5; 5, 8, 1.5; 10, 4, 1.5]';
+% locator_front = [0, 1, 0; 1, 0, 0; 0, -1, 0; -1, 0, 0]; 
+% locator_up = [0, 0, 1; 0, 0, 1; 0, 0, 1; 0, 0, 1];
+
+% Ceiling : 50.7264 / 312812.3727
+locatorPos = [3, 2, 3; 3, 6, 3; 7, 2, 3; 7, 6, 3]';
+locator_front = [0, 0, -1; 0, 0, -1; 0, 0, -1; 0, 0, -1]; 
+locator_up = [0, 1, 0; 0, 1, 0; 0, 1, 0; 0, 1, 0];
+
+% Orthogonal : 0.37617 / 7.826
+% locatorPos = [5, 0, 1.5; 0, 4, 1.5; 10, 4, 1.5; 5, 4, 3]';
+% locator_front = [0, 1, 0; 1, 0, 0; -1, 0, 0; 0, 0, -1]; 
+% locator_up = [0, 0, 1; 0, 0, 1; 0, 0, 1; 0, 1, 0];
 
 % 이동 노드(태그)의 그리드 간격 설정
 fixedHeight = 1.5;                      % 측위를 진행할 2차원 평면의 고정 높이 (m)
-gridSpacing = 2;                      % 2차원 공간 분할 간격 (m)
-offset = 0.5;
+gridSpacing = 1;                      % 2차원 공간 분할 간격 (m)
+offset = 1;
 
 % 위치 추정 방식 설정
-estimationMethod = "Linear";            % Linear: 선형 삼각측량, Non-Linear: 비선형 최적화)
+enableWeighted = false;
+estimationMethod = "Non-linear";            % Linear: 선형 삼각측량, Non-Linear: 비선형 최적화)
 
 % BLE AoA 물리 계층(PHY) 및 하드웨어 파라미터 설정
 numDimensions = 3;                      % 3차원 추정
@@ -38,9 +59,13 @@ accessAddress = '01234567';             % 접속 주소
 payloadLength = 1;                      % 페이로드 길이 (바이트)
 cteLength = 160;                        % CTE 구간 길이 (ms)
 sampleOffset = 2;                       % 샘플링 시작 오프셋
-EbNo = 25;                              % SNR 결정을 위한 비트 에너지 대비 잡음 밀도 (dB) 5~10(생존) | 15~20(안정) | 25(이상)
+EbNo = 15;                              % SNR 결정을 위한 비트 에너지 대비 잡음 밀도 (dB) 5~10(생존) | 15~20(안정) | 25(이상)
 environment = "Industrial";             % 경로 손실 모델 환경 'Outdoor', 'Industrial', 'Home', 'Office'
 txPower = 0;                            % BLE 송신 전력 0~4 (dBm) 0dBm = 1mW
+
+% 파장(Lambda) 계산 (BLE 중심 주파수 2402MHz + 2MHz * channelIndex 기준)
+fc = 2402e6 + channelIndex * 2e6; 
+lambda = 3e8 / fc; % 빛의 속도 / 주파수
 
 % Bluetooth 경로 손실(Path Loss) 모델 설정 객체 생성
 rangeConfig = bluetoothRangeConfig;
@@ -162,6 +187,7 @@ initState = [1 chanIdxBin];
 dewhiten = bluetoothWhiten(InitialConditions=initState');
 
 % 전체 결과 저장용 버퍼 초기화
+metric = zeros(1, numNodePositions);                    % FIM 기반 평가 지표 
 posNodeEst = zeros(numDimensions, numNodePositions);    % 지점별 측위 위치
 posLocatorBuffer = cell(1, numNodePositions);           % 지점별 사용 로케이터
 S = RandStream('mt19937ar', 'Seed', 5489);
@@ -196,10 +222,35 @@ for inumNode = 1:numNodePositions
     % 거리 기반 경로 손실(Path Loss) 선형 값 계산
     plLin = helperBluetoothEstimatePathLoss(rangeConfig.Environment, distanceActive);
     
+    % FIM 기반 평가 지표 생성
+    if correlationFIM
+        rotMatActive = rotMatArray(:, :, activeIdx);
+        base_snr_lin = 10^(snr / 10);
+        SNR_Lin_Array = base_snr_lin ./ plLin'; % 벡터 연산을 통해 각 앵커별 선형 SNR 획득
+
+        FIM = cumulativeFIMCalculation(posNode(:, inumNode), posActiveLocators', rotMatActive, pos', lambda, SNR_Lin_Array);
+    
+        % FIM 지표 저장
+        if rcond(FIM) < 1e-12
+            metric(inumNode) = inf;
+        elseif strcmp(correlationFIM, 'A-opt')
+            metric(inumNode) = trace(inv(FIM));
+        elseif strcmp(correlationFIM, 'D-opt')
+            metric(inumNode) = det(FIM);
+        elseif strcmp(correlationFIM, 'E-opt')
+            metric(inumNode) = min(eig(FIM));
+        else
+            metrices.CondNum = cond(FIM);
+        end
+    end
+
     % 임시 데이터 저장용 파라미터 생성
     angleEstGlobal = zeros(numActiveLocators, numDimensions-1);
     [pathLossdB, linkFailFlag] = deal(zeros(numActiveLocators, 1));
     angleGtLocal = zeros(numActiveLocators, numDimensions-1);
+    
+    % 앵커별 신뢰도(가중치) 저장용 배열 초기화
+    confidenceWeights = ones(numActiveLocators, 1);
 
     % BLE 데이터 패킷(PDU) 및 파형 생성
     data = helperBLEGenerateDFPDU(dfPacketType, cteLength, cteType, payloadLength, crcInit);
@@ -488,7 +539,16 @@ for inumNode = 1:numNodePositions
         refSampleLength = 8;                                            
         minIQSamples = refSampleLength + getNumElements(cfg) - 1; % 안테나 별 최소 1회 이상의 샘플링 데이터
         
-        if ~crcError && length(nonzeros(iqSamples)) >= minIQSamples     
+        if ~crcError && length(nonzeros(iqSamples)) >= minIQSamples  
+            % 고윳값 분산 비율을 통한 신뢰도 가중치 계산 (Eigenvalue Spread)
+            if enableWeighted
+                numAnts = prod(arraySize);                                          % 안테나 개수에 맞춰 공간 스냅샷 행렬 생성
+                X = reshape(iqSamples, numAnts, []);
+                Rxx = (X * X') / size(X, 2);                                        % 공간 공분산 행렬 계산
+                eigVals = sort(real(eig(Rxx)), 'descend');                          % 고윳값 추출 및 내림차순 정렬
+                confidenceWeights(i) = eigVals(1) / (mean(eigVals(2:end)) + eps);   % 주신호 전력 / 멀티패스(노이즈) 전력 평균 비율 계산
+            end
+            
             % MUSIC 알고리즘 : 로컬 좌표계 기준의 도래각(AoA) 추정
             angleEstLocal = bleAngleEstimate(iqSamples, cfg);
             
@@ -515,15 +575,11 @@ for inumNode = 1:numNodePositions
     % 최소 2개 이상의 로케이터로부터 유효한 각도를 얻었을 때 위치 계산
     if validLocatorsCount >= 2 && ~all(angleEstGlobal(:,1) == angleEstGlobal(1,1))
         % 선형 삼각측량법으로 기초 위치 계산
-        posLin = blePositionEstimate(posActiveLocators(:, validIdx), "angulation", angleEstGlobal(validIdx, :).');
-        
+        posLin = linearTriangulation(posActiveLocators(:, validIdx), angleEstGlobal(validIdx, :), confidenceWeights(validIdx));
+
         if strcmp(estimationMethod, "Non-linear")
             % 비선형 정밀화(가우스-뉴턴 등)를 통해 좌표 보정
-            posNodeEst(:, inumNode) = nonLinearTriangulation(...
-                posActiveLocators(:, validIdx), ...
-                angleEstGlobal(validIdx, :), ...
-                posLin, ...
-                roomSize);
+            posNodeEst(:, inumNode) = nonLinearTriangulation(posLin, posActiveLocators(:, validIdx), angleEstGlobal(validIdx, :), confidenceWeights(validIdx));
         else
             % 선형 측정 결과 그대로 사용
             posNodeEst(:, inumNode) = posLin;
@@ -539,16 +595,89 @@ end
 % =========================================================================
 % (1) RMSE 및 위치 추정 실패율 터미널 출력
 posErr = sqrt(sum((posNodeEst - posNode).^2)); 
+
 disp("======================================================");
 disp(["Positioning error (RMSE) in meters = ", num2str(mean(posErr, 'omitnan'))]);
 
 failedPointsCount = sum(isnan(posNodeEst(1,:))); % X좌표가 NaN이면 실패로 간주
 disp(["총 이동 경로(Waypoints) 개수 : ", num2str(numNodePositions)]);
 disp(["위치 추정 실패 포인트 (Valid Locator < 2) : ", num2str(failedPointsCount), " / ", num2str(numNodePositions)]);
+
+% (2) FIM 상관관계 스캐터 플롯 출력
+if correlationFIM
+    figure('Name', 'FIM A-Optimality vs RMSE', 'Color', 'w');
+    
+    % 에러가 계산 불가능(NaN)하거나 FIM이 특이행렬(inf)인 포인트 제외
+    validPlotIdx = ~isnan(posErr) & ~isinf(metric);
+    validMetric = metric(validPlotIdx);
+    validRMSE = posErr(validPlotIdx);
+    
+    if ~isempty(validMetric)
+        avgMetric = mean(validMetric); 
+    else
+        avgMetric = inf; % 유효한 포인트가 없을 경우
+    end
+
+    disp(["FIM 평균 지표 (", correlationFIM ,") : ", num2str(avgMetric)]);
+
+    if length(validMetric) > 1
+        % 피어슨 상관계수 (Pearson correlation r) 계산
+        R = corrcoef(validMetric, validRMSE);
+        pearsonR = R(1, 2);
+        
+        scatter(validMetric, validRMSE, 40, 'b', 'filled', 'MarkerFaceAlpha', 0.6);
+        hold on;
+        
+        % 1차 회귀 추세선
+        p = polyfit(validMetric, validRMSE, 1);
+        x_fit = linspace(min(validMetric), max(validMetric), 100);
+        y_fit = polyval(p, x_fit);
+        plot(x_fit, y_fit, 'r-', 'LineWidth', 2);
+        
+        title('Correlation between Metric and Localization RMSE');
+        xlabel('A-optimality (Lower is Better)');
+        ylabel('Localization Error [m] (RMSE)');
+        grid on;
+        legend('Simulated Points', ['Trend Line (r = ', num2str(pearsonR, '%.4f'), ')'], 'Location', 'best');
+        hold off;
+    else
+        disp('상관관계를 그리기 위한 유효한 데이터 포인트가 부족합니다.');
+    end
+end
+
+% if correlationFIM
+%     figure('Name', ['FIM Distribution - ', correlationFIM], 'Color', 'w');
+% 
+%     % 튀는 값(Inf)을 시각화하기 위해 임시로 매우 큰 값으로 대체하거나 제거
+%     displayMetric = metric;
+%     infIdx = isinf(displayMetric);
+%     if any(infIdx)
+%         fprintf('경고: %d개 지점에서 FIM이 특이행렬(Singular)입니다.\n', sum(infIdx));
+%         % 시각화를 위해 Inf를 유효한 최댓값의 1.2배로 설정 (색상 구분을 위함)
+%         maxValid = max(displayMetric(~infIdx));
+%         displayMetric(infIdx) = maxValid * 1.2;
+%     end
+% 
+%     % scatter3를 이용하여 위치별 metric 값 표시
+%     % 'filled'와 'v' (데이터 값에 따른 색상) 사용
+%     scatter3(posNode(1,:), posNode(2,:), posNode(3,:), 60, displayMetric, 'filled');
+%     hold on;
+% 
+%     % 로케이터 위치 표시 (비교용)
+%     plot3(locatorPos(1,:), locatorPos(2,:), locatorPos(3,:), 'rk', 'MarkerSize', 10, 'LineWidth', 2);
+%     text(locatorPos(1,:), locatorPos(2,:), locatorPos(3,:)+0.2, 'Anchor', 'FontSize', 10, 'FontWeight', 'bold');
+% 
+%     colorbar;
+%     colormap('jet'); % 낮은 값(좋음)은 파란색, 높은 값(나쁨)은 빨간색
+%     title(['Spatial Distribution of ', correlationFIM, ' Metric']);
+%     xlabel('X [m]'); ylabel('Y [m]'); zlabel('Z [m]');
+%     grid on; view(0, 90); % 2D 평면처럼 보기 위해 위에서 아래로 조망
+%     hold off;
+% end
+
 disp("======================================================");
 
-
-% (2) 마지막 포인트 멀티패스 레이트레이싱 결과 시각화
+% (3) 마지막 포인트 멀티패스 레이트레이싱 결과 시각화
 if enableMultipath && enableMultipathVisual
     % 송신기 이미지 표시
     txFinal = txsite("cartesian", ...
