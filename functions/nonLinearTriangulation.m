@@ -1,4 +1,4 @@
-function posEst = nonLinearTriangulation(locators, measuredAngles, initialPos, roomSize)
+function posEst = nonLinearTriangulation(locators, measuredAngles, initialPos)
     % NONLINEARTRIANGULATION 비선형 최소제곱법을 이용한 3D 위치 추정 (가중치 미적용)
     %
     % [입력 파라미터]
@@ -14,15 +14,11 @@ function posEst = nonLinearTriangulation(locators, measuredAngles, initialPos, r
         'FunctionTolerance', 1e-6, ...
         'StepTolerance', 1e-6);
 
-    % 2. 경계 조건 설정 (추정 위치를 방 안으로 제한)
-    lb = [0; 0; 0];
-    ub = roomSize(:);
-
     % 3. 비선형 최적화 수행
     % 가중치 없이 각도 잔차만 전달합니다.
     try
         posEst = lsqnonlin(@(p) angleResiduals(p, locators, measuredAngles), ...
-                           initialPos, lb, ub, options);
+                           initialPos, [], [], options);
     catch
         % 최적화 수렴 실패 시 초기값(선형 추정값) 유지
         posEst = initialPos;

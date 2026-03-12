@@ -4,16 +4,19 @@
 % MATLAB 오른손 좌표계 사용 : 엄지 +X, 검지 +Y, 중지 +Z
 
 % 멀티패스 시뮬레이션 파라미터
-enableMultipath = true;                % 멀티패스 레이트레이싱 시뮬레이션 on/off
+enableMultipath = false;                % 멀티패스 레이트레이싱 시뮬레이션 on/off
 enableMultipathVisual = true;           % 마지막 포인트 다수 locator 멀티패스 시각화 on/off
 stlFileName = 'test_room_10x8x3.stl';   % 로드할 환경 맵 STL 파일 (실제 파일 경로로 변경 필요)
 material = 'air';
 
+% FIM 분석
+correlationFIM = 'A-opt';                  % false | 'A-opt' | 'D-opt' | 'E-opt' | 'Cond'
+
 % 로케이터 설치 위치 및 각도 파라미터 (단위 벡터 기반)
 % locator_front = [1, 0, 0] locator_up = [0, 0, 1]
-locatorPos = [5, 1, 1.5; 1, 4, 1.5; 5, 7, 1.5; 5, 4, 3; 9, 4, 1.5]';
-locator_front = [0, 1, 0; 1, 0, 0; 0, -1, 0; 0, 0, -1; -1, 0, 0]; 
-locator_up = [0, 0, 1; 0, 0, 1; 0, 0, 1; 0, 1, 0; 0, 0, 1];
+locatorPos = [5, 1, 1.5; 5, 7, 1.5; 5, 4, 3]';
+locator_front = [0, 1, 0; 0, -1, 0; 0, 0, -1]; 
+locator_up = [0, 0, 1; 0, 0, 1; 0, 1, 0; 0, 1, 0];
 
 % 이동 노드(태그)의 주요 경유지(Waypoints) 설정
 nodeWaypoints = [2, 6, 1.5; 2, 2, 1.5; 5, 2, 1.5; 5, 6, 1.5; 8, 6, 1.5; 8, 2, 1.5];
@@ -40,6 +43,10 @@ sampleOffset = 2;                       % 샘플링 시작 오프셋
 EbNo = 25;                              % SNR 결정을 위한 비트 에너지 대비 잡음 밀도 (dB) 5~10(생존) | 15~20(안정) | 25(이상)
 environment = "Industrial";             % 경로 손실 모델 환경 'Outdoor', 'Industrial', 'Home', 'Office'
 txPower = 0;                            % BLE 송신 전력 0~4 (dBm) 0dBm = 1mW
+
+% 파장(Lambda) 계산 (BLE 중심 주파수 2402MHz + 2MHz * channelIndex 기준)
+fc = 2402e6 + channelIndex * 2e6; 
+lambda = 3e8 / fc; % 빛의 속도 / 주파수
 
 % Bluetooth 경로 손실(Path Loss) 모델 설정 객체 생성
 rangeConfig = bluetoothRangeConfig;
@@ -112,7 +119,7 @@ preambleLen = 8 * phyFactor;
 crcLen = 24;
 crcDet = comm.CRCDetector("x^24 + x^10 + x^9 + x^6 + x^4 + x^3 + x + 1", "DirectMethod", true, ...
     "InitialConditions", int2bit(hex2dec(crcInit), crcLen).');
-rng('default');             % 난수 초기화
+rng('shuffle');             % 난수 초기화
 
 % SNR 계산
 % 샘플링 속도가 빨라질수록, 관측하는 대역폭이 증가하여 잡음전력이 증가 (신호 대역폭은 일정)
@@ -125,9 +132,10 @@ initState = [1 chanIdxBin];
 dewhiten = bluetoothWhiten(InitialConditions=initState');
 
 % 전체 결과 저장용 버퍼 초기화
+metric = zeros(1, numNodePositions);                    % FIM 기반 평가 지표 
 posNodeEst = zeros(numDimensions, numNodePositions);    % 지점별 측위 위치
 posLocatorBuffer = cell(1, numNodePositions);           % 지점별 사용 로케이터
-S = RandStream('mt19937ar', 'Seed', 5489);
+S = RandStream('mt19937ar', 'Seed', 'shuffle');
 
 % 통신 채널의 아날로그 열화(Impairment) 모델 객체
 pfo = comm.PhaseFrequencyOffset(SampleRate=sampleRate); % 주파수 오프셋에 적용
@@ -158,6 +166,28 @@ for inumNode = 1:numNodePositions
     
     % 거리 기반 경로 손실(Path Loss) 선형 값 계산
     plLin = helperBluetoothEstimatePathLoss(rangeConfig.Environment, distanceActive);
+
+    % FIM 기반 평가 지표 생성
+    if correlationFIM
+        rotMatActive = rotMatArray(:, :, activeIdx);
+        base_snr_lin = 10^(snr / 10);
+        SNR_Lin_Array = base_snr_lin ./ plLin'; % 벡터 연산을 통해 각 앵커별 선형 SNR 획득
+
+        FIM = cumulativeFIMCalculation(posNode(:, inumNode), posActiveLocators', rotMatActive, pos', lambda, SNR_Lin_Array);
+    
+        % FIM 지표 저장
+        if rcond(FIM) < 1e-12
+            metric(inumNode) = inf
+        elseif strcmp(correlationFIM, 'A-opt')
+            metric(inumNode) = trace(inv(FIM));
+        elseif strcmp(correlationFIM, 'D-opt')
+            metric(inumNode) = det(FIM);
+        elseif strcmp(correlationFIM, 'E-opt')
+            metric(inumNode) = min(eig(FIM));
+        else
+            metrices.CondNum = cond(FIM);
+        end
+    end
     
     % 임시 데이터 저장용 파라미터 생성
     angleEstGlobal = zeros(numActiveLocators, numDimensions-1);
@@ -454,7 +484,7 @@ for inumNode = 1:numNodePositions
         if ~crcError && length(nonzeros(iqSamples)) >= minIQSamples     
             % MUSIC 알고리즘 : 로컬 좌표계 기준의 도래각(AoA) 추정
             angleEstLocal = bleAngleEstimate(iqSamples, cfg);
-            
+
             % [좌표 변환] 추정된 로컬 각도를 글로벌 좌표계로 다시 변환 (정방향 회전)
             [lx, ly, lz] = sph2cart(deg2rad(angleEstLocal(1)), deg2rad(angleEstLocal(2)), 1);
             dirVecGlobalEst = rotatepoint(locatorQuat(locIdx), [lx, ly, lz]);
@@ -485,8 +515,7 @@ for inumNode = 1:numNodePositions
             posNodeEst(:, inumNode) = nonLinearTriangulation(...
                 posActiveLocators(:, validIdx), ...
                 angleEstGlobal(validIdx, :), ...
-                posLin, ...
-                roomSize);
+                posLin);
         else
             % 선형 측정 결과 그대로 사용
             posNodeEst(:, inumNode) = posLin;
@@ -510,8 +539,41 @@ disp(["총 이동 경로(Waypoints) 개수 : ", num2str(numNodePositions)]);
 disp(["위치 추정 실패 포인트 (Valid Locator < 2) : ", num2str(failedPointsCount), " / ", num2str(numNodePositions)]);
 disp("======================================================");
 
+% (2) FIM 상관관계 스캐터 플롯 출력
+if correlationFIM
+    figure('Name', 'FIM A-Optimality vs RMSE', 'Color', 'w');
+    
+    % 에러가 계산 불가능(NaN)하거나 FIM이 특이행렬(inf)인 포인트 제외
+    validPlotIdx = ~isnan(posErr) & ~isinf(metric);
+    validMetric = metric(validPlotIdx);
+    validRMSE = posErr(validPlotIdx);
+    
+    if length(validMetric) > 1
+        % 피어슨 상관계수 (Pearson correlation r) 계산
+        R = corrcoef(validMetric, validRMSE);
+        pearsonR = R(1, 2);
+        
+        scatter(validMetric, validRMSE, 40, 'b', 'filled', 'MarkerFaceAlpha', 0.6);
+        hold on;
+        
+        % 1차 회귀 추세선
+        p = polyfit(validMetric, validRMSE, 1);
+        x_fit = linspace(min(validMetric), max(validMetric), 100);
+        y_fit = polyval(p, x_fit);
+        plot(x_fit, y_fit, 'r-', 'LineWidth', 2);
+        
+        title('Correlation between Metric and Localization RMSE');
+        xlabel('A-optimality (Lower is Better)');
+        ylabel('Localization Error [m] (RMSE)');
+        grid on;
+        legend('Simulated Points', ['Trend Line (r = ', num2str(pearsonR, '%.4f'), ')'], 'Location', 'best');
+        hold off;
+    else
+        disp('상관관계를 그리기 위한 유효한 데이터 포인트가 부족합니다.');
+    end
+end
 
-% (2) 마지막 포인트 멀티패스 레이트레이싱 결과 시각화
+% (3) 마지막 포인트 멀티패스 레이트레이싱 결과 시각화
 if enableMultipath && enableMultipathVisual
     % 송신기 이미지 표시
     txFinal = txsite("cartesian", ...
@@ -533,7 +595,7 @@ if enableMultipath && enableMultipathVisual
     end
 end
 
-% (3) 3D 트래킹 시각화 맵 생성
+% (4) 3D 트래킹 시각화 맵 생성
 if ~all(isnan(posNodeEst(1,:)))
     visualizeLocalization(locatorPos, posNode, posLocatorBuffer, posNodeEst)
     
