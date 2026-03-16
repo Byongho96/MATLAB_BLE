@@ -4,10 +4,10 @@
 % MATLAB 오른손 좌표계 사용 : 엄지 +X, 검지 +Y, 중지 +Z
 
 % 멀티패스 시뮬레이션 파라미터
-enableMultipath = false;                % 멀티패스 레이트레이싱 시뮬레이션 on/off
+enableMultipath = true;                % 멀티패스 레이트레이싱 시뮬레이션 on/off
 enableMultipathVisual = true;           % 마지막 포인트 다수 locator 멀티패스 시각화 on/off
 stlFileName = 'test_room_10x8x3.stl';   % 로드할 환경 맵 STL 파일 (실제 파일 경로로 변경 필요)
-material = 'air';
+material = 'concrete';
 
 % FIM 분석
 correlationFIM = 'A-opt';                  % false | 'A-opt' | 'D-opt' | 'E-opt' | 'Cond'
@@ -16,19 +16,20 @@ correlationFIM = 'A-opt';                  % false | 'A-opt' | 'D-opt' | 'E-opt'
 % locator_front = [1, 0, 0] locator_up = [0, 0, 1]
 
 % Diagonal : 0.65436 / 11.0865
-% locatorPos = [0, 0, 1.5; 0, 8, 1.5; 10, 8, 1.5; 10, 0, 1.5]';
-% locator_front = [1, 1, 0; 1, -1, 0; -1, -1, 0; -1, 1, 0]; 
-% locator_up = [0, 0, 1; 0, 0, 1; 0, 0, 1; 0, 0, 1];
+locatorPos = [1, 1, 1.5; 1, 7, 1.5; 9, 7, 1.5; 9, 1, 1.5]';
+locator_front = [1, 1, 0; 1, -1, 0; -1, -1, 0; -1, 1, 0]; 
+locator_up = [0, 0, 1; 0, 0, 1; 0, 0, 1; 0, 0, 1];
+
 
 % Rectangular : 0.50061 / 9.1077
 % locatorPos = [5, 0, 1.5; 0, 4, 1.5; 5, 8, 1.5; 10, 4, 1.5]';
 % locator_front = [0, 1, 0; 1, 0, 0; 0, -1, 0; -1, 0, 0]; 
-% locator_up = [0, 0, 1; 0, 0, 1; 0, 0, 1; 0, 0, 1];
+% locator_up = [0, 0, 1; 0, 0, 1; 0, 0, 1;0, 0, 1];
 
 % Ceiling : 50.7264 / 312812.3727
-locatorPos = [3, 2, 3; 3, 6, 3; 7, 2, 3; 7, 6, 3]';
-locator_front = [0, 0, -1; 0, 0, -1; 0, 0, -1; 0, 0, -1]; 
-locator_up = [0, 1, 0; 0, 1, 0; 0, 1, 0; 0, 1, 0];
+% locatorPos = [3, 2, 3; 3, 6, 3; 7, 2, 3; 7, 6, 3]';
+% locator_front = [0, 0, -1; 0, 0, -1; 0, 0, -1; 0, 0, -1]; 
+% locator_up = [0, 1, 0; 0, 1, 0; 0, 1, 0; 0, 1, 0];
 
 % Orthogonal : 0.37617 / 7.826
 % locatorPos = [5, 0, 1.5; 0, 4, 1.5; 5, 8, 1.5; 5, 4, 3]';
@@ -36,8 +37,8 @@ locator_up = [0, 1, 0; 0, 1, 0; 0, 1, 0; 0, 1, 0];
 % locator_up = [0, 0, 1; 0, 0, 1; 0, 0, 1; 0, 1, 0];
 
 % 이동 노드(태그)의 주요 경유지(Waypoints) 설정
-nodeWaypoints = [1, 7, 1.5; 9, 7, 1.5];
-interpInterval = 2;                   % 경로 보간 간격 (0.5m 단위로 위치 생성)      
+nodeWaypoints = [2, 6, 1.5; 2, 2, 1.5; 5, 2, 1.5; 5, 6, 1.5; 8, 6, 1.5; 8, 2, 1.5];
+interpInterval = 1;                   % 경로 보간 간격 (0.5m 단위로 위치 생성)      
 
 % 위치 추정 방식 설정
 estimationMethod = "Non-linear";            % Linear: 선형 삼각측량, Non-Linear: 비선형 최적화)
@@ -190,11 +191,11 @@ for inumNode = 1:numNodePositions
         base_snr_lin = 10^(snr / 10);
         SNR_Lin_Array = base_snr_lin ./ plLin'; % 벡터 연산을 통해 각 앵커별 선형 SNR 획득
 
-        FIM = cumulativeFIMCalculation(posNode(:, inumNode), posActiveLocators', rotMatActive, pos', lambda, SNR_Lin_Array);
+        FIM = cumulativeFIMCalculation(posNode(:, inumNode), posActiveLocators', rotMatActive, pos, lambda, SNR_Lin_Array);
     
         % FIM 지표 저장
         if rcond(FIM) < 1e-12
-            metric(inumNode) = inf
+            metric(inumNode) = inf;
         elseif strcmp(correlationFIM, 'A-opt')
             metric(inumNode) = trace(inv(FIM));
         elseif strcmp(correlationFIM, 'D-opt')
@@ -614,7 +615,7 @@ if correlationFIM
     hold on;
 
     % 로케이터 위치 표시 (비교용)
-    plot3(locatorPos(1,:), locatorPos(2,:), locatorPos(3,:), 'rk', 'MarkerSize', 10, 'LineWidth', 2);
+    plot3(locatorPos(1,:), locatorPos(2,:), locatorPos(3,:), 'ro', 'MarkerSize', 10, 'LineWidth', 2);
     text(locatorPos(1,:), locatorPos(2,:), locatorPos(3,:)+0.2, 'Anchor', 'FontSize', 10, 'FontWeight', 'bold');
 
     colorbar;

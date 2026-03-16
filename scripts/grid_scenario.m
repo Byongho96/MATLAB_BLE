@@ -6,8 +6,8 @@
 % 멀티패스 시뮬레이션 파라미터
 enableMultipath = false;                % 멀티패스 레이트레이싱 시뮬레이션 on/off
 enableMultipathVisual = true;           % 마지막 포인트 다수 locator 멀티패스 시각화 on/off
-stlFileName = 'test_room_10x8x3.stl';   % 로드할 환경 맵 STL 파일 (실제 파일 경로로 변경 필요)
-material = 'air';
+stlFileName = 'test_room_7_2x6x2_6.stl';   % 로드할 환경 맵 STL 파일 (실제 파일 경로로 변경 필요)
+material = 'concrete';
 
 % FIM 분석
 correlationFIM = 'A-opt';                  % false | 'A-opt' | 'D-opt' | 'E-opt' | 'Cond'
@@ -15,22 +15,22 @@ correlationFIM = 'A-opt';                  % false | 'A-opt' | 'D-opt' | 'E-opt'
 % 로케이터 설치 위치 및 각도 파라미터 (단위 벡터 기반)
 % locator_front = [1, 0, 0] locator_up = [0, 0, 1]
 
-% Diagonal : 0.65436 / 11.0865
+% Diagonal : 45.5739 / 0.65397 | 0.62783
 % locatorPos = [0, 0, 1.5; 0, 8, 1.5; 10, 8, 1.5; 10, 0, 1.5]';
 % locator_front = [1, 1, 0; 1, -1, 0; -1, -1, 0; -1, 1, 0]; 
 % locator_up = [0, 0, 1; 0, 0, 1; 0, 0, 1; 0, 0, 1];
 
-% Rectangular : 0.50061 / 9.1077
+% Rectangular : 30.5686 / 0.50061 | 0.50012
 % locatorPos = [5, 0, 1.5; 0, 4, 1.5; 5, 8, 1.5; 10, 4, 1.5]';
 % locator_front = [0, 1, 0; 1, 0, 0; 0, -1, 0; -1, 0, 0]; 
 % locator_up = [0, 0, 1; 0, 0, 1; 0, 0, 1; 0, 0, 1];
 
-% Ceiling : 50.7264 / 312812.3727
+% Ceiling : 28.0968 / 16523.92 | 0.56356
 locatorPos = [3, 2, 3; 3, 6, 3; 7, 2, 3; 7, 6, 3]';
 locator_front = [0, 0, -1; 0, 0, -1; 0, 0, -1; 0, 0, -1]; 
 locator_up = [0, 1, 0; 0, 1, 0; 0, 1, 0; 0, 1, 0];
 
-% Orthogonal : 0.37617 / 7.826
+% Orthogonal : 20.9816 / 0.38736 | 0.37568
 % locatorPos = [5, 0, 1.5; 0, 4, 1.5; 10, 4, 1.5; 5, 4, 3]';
 % locator_front = [0, 1, 0; 1, 0, 0; -1, 0, 0; 0, 0, -1]; 
 % locator_up = [0, 0, 1; 0, 0, 1; 0, 0, 1; 0, 1, 0];
@@ -41,7 +41,7 @@ gridSpacing = 1;                      % 2차원 공간 분할 간격 (m)
 offset = 1;
 
 % 위치 추정 방식 설정
-enableWeighted = false;
+enableWeighted = true;
 estimationMethod = "Non-linear";            % Linear: 선형 삼각측량, Non-Linear: 비선형 최적화)
 
 % BLE AoA 물리 계층(PHY) 및 하드웨어 파라미터 설정
@@ -228,8 +228,9 @@ for inumNode = 1:numNodePositions
         base_snr_lin = 10^(snr / 10);
         SNR_Lin_Array = base_snr_lin ./ plLin'; % 벡터 연산을 통해 각 앵커별 선형 SNR 획득
 
-        FIM = cumulativeFIMCalculation(posNode(:, inumNode), posActiveLocators', rotMatActive, pos', lambda, SNR_Lin_Array);
-    
+        FIM = cumulativeFIMCalculation(posNode(:, inumNode), posActiveLocators', rotMatActive, pos, lambda, SNR_Lin_Array);
+        disp(rank(FIM)); % 3D 위치 추적이라면 3이 나와야 정상입니다.
+        disp(det(FIM));  % 이 값이 0에 아주 가깝다면(예: 1e-10 이하) 특이 행렬입니다.
         % FIM 지표 저장
         if rcond(FIM) < 1e-12
             metric(inumNode) = inf;
@@ -645,35 +646,35 @@ if correlationFIM
     end
 end
 
-% if correlationFIM
-%     figure('Name', ['FIM Distribution - ', correlationFIM], 'Color', 'w');
-% 
-%     % 튀는 값(Inf)을 시각화하기 위해 임시로 매우 큰 값으로 대체하거나 제거
-%     displayMetric = metric;
-%     infIdx = isinf(displayMetric);
-%     if any(infIdx)
-%         fprintf('경고: %d개 지점에서 FIM이 특이행렬(Singular)입니다.\n', sum(infIdx));
-%         % 시각화를 위해 Inf를 유효한 최댓값의 1.2배로 설정 (색상 구분을 위함)
-%         maxValid = max(displayMetric(~infIdx));
-%         displayMetric(infIdx) = maxValid * 1.2;
-%     end
-% 
-%     % scatter3를 이용하여 위치별 metric 값 표시
-%     % 'filled'와 'v' (데이터 값에 따른 색상) 사용
-%     scatter3(posNode(1,:), posNode(2,:), posNode(3,:), 60, displayMetric, 'filled');
-%     hold on;
-% 
-%     % 로케이터 위치 표시 (비교용)
-%     plot3(locatorPos(1,:), locatorPos(2,:), locatorPos(3,:), 'rk', 'MarkerSize', 10, 'LineWidth', 2);
-%     text(locatorPos(1,:), locatorPos(2,:), locatorPos(3,:)+0.2, 'Anchor', 'FontSize', 10, 'FontWeight', 'bold');
-% 
-%     colorbar;
-%     colormap('jet'); % 낮은 값(좋음)은 파란색, 높은 값(나쁨)은 빨간색
-%     title(['Spatial Distribution of ', correlationFIM, ' Metric']);
-%     xlabel('X [m]'); ylabel('Y [m]'); zlabel('Z [m]');
-%     grid on; view(0, 90); % 2D 평면처럼 보기 위해 위에서 아래로 조망
-%     hold off;
-% end
+if correlationFIM
+    figure('Name', ['FIM Distribution - ', correlationFIM], 'Color', 'w');
+
+    % 튀는 값(Inf)을 시각화하기 위해 임시로 매우 큰 값으로 대체하거나 제거
+    displayMetric = metric;
+    infIdx = isinf(displayMetric);
+    if any(infIdx)
+        fprintf('경고: %d개 지점에서 FIM이 특이행렬(Singular)입니다.\n', sum(infIdx));
+        % 시각화를 위해 Inf를 유효한 최댓값의 1.2배로 설정 (색상 구분을 위함)
+        maxValid = max(displayMetric(~infIdx));
+        displayMetric(infIdx) = maxValid * 1.2;
+    end
+
+    % scatter3를 이용하여 위치별 metric 값 표시
+    % 'filled'와 'v' (데이터 값에 따른 색상) 사용
+    scatter3(posNode(1,:), posNode(2,:), posNode(3,:), 60, displayMetric, 'filled');
+    hold on;
+
+    % 로케이터 위치 표시 (비교용)
+    plot3(locatorPos(1,:), locatorPos(2,:), locatorPos(3,:), 'ro', 'MarkerSize', 10, 'LineWidth', 2);
+    text(locatorPos(1,:), locatorPos(2,:), locatorPos(3,:)+0.2, 'Anchor', 'FontSize', 10, 'FontWeight', 'bold');
+
+    colorbar;
+    colormap('jet'); % 낮은 값(좋음)은 파란색, 높은 값(나쁨)은 빨간색
+    title(['Spatial Distribution of ', correlationFIM, ' Metric']);
+    xlabel('X [m]'); ylabel('Y [m]'); zlabel('Z [m]');
+    grid on; view(0, 90); % 2D 평면처럼 보기 위해 위에서 아래로 조망
+    hold off;
+end
 
 disp("======================================================");
 
