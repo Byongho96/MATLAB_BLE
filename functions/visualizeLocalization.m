@@ -1,4 +1,4 @@
-function visualizeLocalization(posLocators,posNode,posActiveLocators,posNodeTrackEst,varargin)
+function visualizeLocalization(posLocators,posNode,posNodeTrackEst,varargin)
 %helperBLEVisualizeNodeTracking Generates Bluetooth LE node grid positioning evaluation
 %   (기존 트래킹 애니메이션을 제거하고, 정적 그리드 측위 오차 시각화로 변경됨)
 
