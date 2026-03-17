@@ -479,7 +479,7 @@ function [posNodeEst, fim] = simulation(posNode, locatorsPos, locatorsUp, locato
                 end
 
                 % MUSIC 알고리즘 : 로컬 좌표계 기준의 도래각(AoA) 추정
-                angleEstLocal = bleAngleEstimate(iqSamples, cfg);
+                angleEstLocal = musicAngleEstimation(iqSamples, cfg, 1);
     
                 % [좌표 변환] 추정된 로컬 각도를 글로벌 좌표계로 다시 변환 (정방향 회전)
                 [lx, ly, lz] = sph2cart(deg2rad(angleEstLocal(1)), deg2rad(angleEstLocal(2)), 1);
